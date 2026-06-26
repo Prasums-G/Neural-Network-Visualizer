@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Neural Network Visualizer — From Scratch</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#f4f6f9;color:#1a1a2e;min-height:100vh}
+    .container{max-width:960px;margin:0 auto;padding:2rem 1.25rem}
+
+    /* HEADER */
+    .page-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem}
+    .page-header h1{font-size:20px;font-weight:600}
+    .arch-badge{background:#eeedfe;color:#3C3489;font-size:12px;padding:5px 12px;border-radius:20px;font-weight:500}
+
+    /* PANELS */
+    .panel{background:#fff;border-radius:14px;border:1px solid #e0e0e0;overflow:hidden;margin-bottom:1rem}
+    .panel-header{background:#f8f8f8;border-bottom:1px solid #e8e8e8;padding:10px 16px;font-size:13px;font-weight:600;color:#444;display:flex;justify-content:space-between;align-items:center}
+    .panel-body{padding:1.25rem}
+
+    /* NETWORK CANVAS */
+    #net-canvas{display:block;width:100%;border-radius:8px;background:#fafafa}
+
+    /* STAT CARDS */
+    .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1rem}
+    @media(max-width:600px){.stat-grid{grid-template-columns:1fr 1fr}}
+    .stat-card{background:#fff;border-radius:10px;border:1px solid #e0e0e0;padding:.9rem 1rem}
+    .stat-label{font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+    .stat-val{font-size:22px;font-weight:700}
+    .green{color:#0f6e56} .red{color:#a32d2d} .purple{color:#534AB7}
+
+    /* CONTROLS */
+    .controls-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+    @media(max-width:600px){.controls-grid{grid-template-columns:1fr}}
+    .ctrl-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .ctrl-label{font-size:12px;color:#666;width:90px;flex-shrink:0}
+    .ctrl-row input[type=range]{flex:1}
+    .ctrl-val{font-size:12px;font-family:monospace;width:40px;text-align:right;color:#333}
+
+    /* BUTTONS */
+    .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .btn{padding:8px 16px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#444;font-size:13px;cursor:pointer;transition:all .15s}
+    .btn:hover{background:#f5f5f5}
+    .btn.primary{background:#7F77DD;color:#fff;border-color:#7F77DD}
+    .btn.primary:hover{background:#534AB7}
+    .btn.success{background:#dcfce7;color:#166534;border-color:#86efac}
+    .btn.danger{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+
+    /* TRUTH TABLE */
+    .truth-table{width:100%;border-collapse:collapse;font-size:13px}
+    .truth-table th{background:#f8f8f8;padding:7px 12px;text-align:center;font-weight:600;border:1px solid #e8e8e8;font-size:12px;color:#666}
+    .truth-table td{padding:7px 12px;text-align:center;border:1px solid #eeeeee}
+    .correct{color:#0f6e56;font-weight:600} .wrong{color:#a32d2d;font-weight:600}
+
+    /* MATH EXPLAINER */
+    .math-box{background:#f8f8f8;border-radius:8px;padding:1rem;font-size:12px;font-family:monospace;color:#444;line-height:1.8;border-left:3px solid #7F77DD}
+
+    /* LOSS CHART */
+    #loss-canvas{width:100%!important}
+
+    /* LEGEND */
+    .legend{display:flex;gap:16px;margin-top:8px;flex-wrap:wrap}
+    .leg-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#666}
+    .leg-dot{width:10px;height:10px;border-radius:50%}
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="page-header">
+    <h1>Neural Network Visualizer</h1>
+    <span class="arch-badge">2 → 4 → 4 → 1 · XOR dataset</span>
+  </div>
+
+  <!-- STAT CARDS -->
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-label">Epoch</div><div class="stat-val purple" id="s-epoch">0</div></div>
+    <div class="stat-card"><div class="stat-label">Loss (BCE)</div><div class="stat-val red" id="s-loss">—</div></div>
+    <div class="stat-card"><div class="stat-label">Accuracy</div><div class="stat-val green" id="s-acc">—</div></div>
+    <div class="stat-card"><div class="stat-label">Learning rate</div><div class="stat-val" id="s-lr">0.10</div></div>
+  </div>
+
+  <!-- NETWORK VISUALISER -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>Live network — node brightness = activation magnitude</span>
+      <span style="font-size:12px;color:#999" id="fwd-label">forward pass</span>
+    </div>
+    <div class="panel-body" style="padding:.75rem">
+      <canvas id="net-canvas" height="220"></canvas>
+    </div>
+  </div>
+
+  <!-- LOSS CHART + CONTROLS -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem">
+
+    <div class="panel">
+      <div class="panel-header">Loss and accuracy over time</div>
+      <div class="panel-body">
+        <canvas id="loss-canvas" height="140"></canvas>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#7F77DD"></div>Loss (lower = better)</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#1D9E75"></div>Accuracy</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">Hyperparameters</div>
+      <div class="panel-body">
+        <div class="ctrl-row">
+          <span class="ctrl-label">Learn rate</span>
+          <input type="range" id="lr" min="1" max="50" step="1" value="10" oninput="updateLR()">
+          <span class="ctrl-val" id="lr-out">0.10</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Speed</span>
+          <input type="range" id="speed" min="1" max="20" step="1" value="5">
+          <span class="ctrl-val" id="speed-out">5</span>
+        </div>
+        <div class="ctrl-row">
+          <span class="ctrl-label">Activation</span>
+          <select id="act-fn" style="flex:1;padding:5px 8px;border-radius:6px;border:1px solid #ddd;font-size:13px;background:#fff">
+            <option value="relu">ReLU (hidden)</option>
+            <option value="sigmoid">Sigmoid (hidden)</option>
+            <option value="tanh">Tanh (hidden)</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="train-btn" onclick="toggleTrain()">▶ Train</button>
+          <button class="btn danger" onclick="resetNetwork()">Reset</button>
+        </div>
+        <div style="font-size:11px;color:#aaa;margin-top:8px">Dataset: XOR — not linearly separable, requires hidden layers</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRUTH TABLE -->
+  <div class="panel">
+    <div class="panel-header">
+      <span>XOR predictions vs ground truth</span>
+      <span style="font-size:12px;color:#999">updates every epoch</span>
+    </div>
+    <div class="panel-body" style="padding:.75rem 1rem">
+      <table class="truth-table" id="truth-table">
+        <thead><tr><th>Input A</th><th>Input B</th><th>Expected</th><th>Predicted (raw)</th><th>Predicted (round)</th><th>Result</th></tr></thead>
+        <tbody id="truth-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- MATH EXPLAINER -->
+  <div class="panel">
+    <div class="panel-header">What's happening — the math</div>
+    <div class="panel-body">
+      <div class="math-box" id="math-box">
+Press ▶ Train to start. The network will run forward propagation → compute loss → backpropagation → update weights, repeating every frame.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  /* ═══════════════════════════════════════════════════
+     ACTIVATION FUNCTIONS + DERIVATIVES
+     Activation functions introduce non-linearity.
+     Without them, stacking layers is mathematically
+     equivalent to a single linear layer — useless for XOR.
+  ═══════════════════════════════════════════════════ */
+  const ACT = {
+    relu:    { f: x => Math.max(0, x),              d: x => x > 0 ? 1 : 0 },
+    sigmoid: { f: x => 1/(1+Math.exp(-x)),          d: x => { const s=1/(1+Math.exp(-x)); return s*(1-s) } },
+    tanh:    { f: x => Math.tanh(x),                d: x => 1 - Math.tanh(x)**2 },
+  };
+
+  /* Output activation is always sigmoid (binary classification) */
+  const SIG = ACT.sigmoid;
+
+  /* ═══════════════════════════════════════════════════
+     XOR DATASET — the classic non-linearly-separable problem.
+     A single-layer perceptron CANNOT learn this. It needs
+     hidden layers + non-linear activations.
+  ═══════════════════════════════════════════════════ */
+  const DATA = [
+    { input:[0,0], target:0 },
+    { input:[0,1], target:1 },
+    { input:[1,0], target:1 },
+    { input:[1,1], target:0 },
+  ];
+
+  /* ═══════════════════════════════════════════════════
+     WEIGHT INITIALISATION — Xavier / Glorot uniform
+     Prevents vanishing/exploding gradients at start.
+     Scale = sqrt(6 / (fan_in + fan_out))
+  ═══════════════════════════════════════════════════ */
+  function xavierInit(rows, cols) {
+    const scale = Math.sqrt(6 / (rows + cols));
+    return Array.from({length:rows}, () =>
+      Array.from({length:cols}, () => (Math.random()*2-1)*scale));
+  }
+
+  function zeroVec(n) { return Array(n).fill(0); }
+
+  /* ═══════════════════════════════════════════════════
+     NETWORK STATE — weights (W) and biases (b)
+     Architecture: 2 inputs → 4 hidden → 4 hidden → 1 output
+  ═══════════════════════════════════════════════════ */
+  let W1,b1,W2,b2,W3,b3;
+  let epoch=0, lossHistory=[], accHistory=[], training=false, animId=null;
+  let lastActivations=[[0,0],[0,0,0,0],[0,0,0,0],[0]];
+
+  function initNetwork() {
+    W1=xavierInit(4,2); b1=zeroVec(4);
+    W2=xavierInit(4,4); b2=zeroVec(4);
+    W3=xavierInit(1,4); b3=zeroVec(1);
+    epoch=0; lossHistory=[]; accHistory=[];
+    lastActivations=[[0,0],[0,0,0,0],[0,0,0,0],[0]];
+  }
+
+  /* ═══════════════════════════════════════════════════
+     FORWARD PROPAGATION
+     For each layer: z = W·a + b, then a = activation(z)
+     Returns all intermediate values needed for backprop.
+  ═══════════════════════════════════════════════════ */
+  function forward(input) {
+    const act = ACT[document.getElementById('act-fn').value];
+
+    const a0 = input;
+
+    /* Layer 1: hidden */
+    const z1 = W1.map((row,i) => row.reduce((s,w,j)=>s+w*a0[j],0) + b1[i]);
+    const a1 = z1.map(act.f);
+
+    /* Layer 2: hidden */
+    const z2 = W2.map((row,i) => row.reduce((s,w,j)=>s+w*a1[j],0) + b2[i]);
+    const a2 = z2.map(act.f);
+
+    /* Layer 3: output (always sigmoid for binary) */
+    const z3 = W3.map((row,i) => row.reduce((s,w,j)=>s+w*a2[j],0) + b3[i]);
+    const a3 = z3.map(SIG.f);
+
+    return {a0,z1,a1,z2,a2,z3,a3};
+  }
+
+  /* ═══════════════════════════════════════════════════
+     BACKPROPAGATION + WEIGHT UPDATE (SGD)
+     Chain rule applied backward through every layer.
+     Loss = Binary Cross-Entropy: -( y·log(p) + (1-y)·log(1-p) )
+     dL/dW = dL/da · da/dz · dz/dW  (chain rule)
+  ═══════════════════════════════════════════════════ */
+  function backward(fwd, target, lr) {
+    const act = ACT[document.getElementById('act-fn').value];
+    const {a0,z1,a1,z2,a2,z3,a3} = fwd;
+
+    /* ── Output layer ── */
+    /* dL/da3 for BCE with sigmoid output simplifies to (pred - target) */
+    const dL_da3 = a3.map((p,i) => p - target);
+    const dL_dz3 = dL_da3.map((d,i) => d * SIG.d(z3[i]));
+    W3.forEach((row,i)=>row.forEach((_,j)=>{ W3[i][j]-=lr*dL_dz3[i]*a2[j]; }));
+    b3.forEach((_,i)=>{ b3[i]-=lr*dL_dz3[i]; });
+
+    /* ── Hidden layer 2 ── */
+    const dL_da2 = a2.map((_,j)=>W3.reduce((s,row,i)=>s+row[j]*dL_dz3[i],0));
+    const dL_dz2 = dL_da2.map((d,j)=>d*act.d(z2[j]));
+    W2.forEach((row,i)=>row.forEach((_,j)=>{ W2[i][j]-=lr*dL_dz2[i]*a1[j]; }));
+    b2.forEach((_,i)=>{ b2[i]-=lr*dL_dz2[i]; });
+
+    /* ── Hidden layer 1 ── */
+    const dL_da1 = a1.map((_,j)=>W2.reduce((s,row,i)=>s+row[j]*dL_dz2[i],0));
+    const dL_dz1 = dL_da1.map((d,j)=>d*act.d(z1[j]));
+    W1.forEach((row,i)=>row.forEach((_,j)=>{ W1[i][j]-=lr*dL_dz1[i]*a0[j]; }));
+    b1.forEach((_,i)=>{ b1[i]-=lr*dL_dz1[i]; });
+  }
+
+  /* ═══════════════════════════════════════════════════
+     ONE TRAINING EPOCH — runs all 4 XOR samples
+  ═══════════════════════════════════════════════════ */
+  function trainEpoch() {
+    const lr = document.getElementById('lr').value / 100;
+    let totalLoss=0, correct=0;
+
+    DATA.forEach(({input,target}) => {
+      const fwd = forward(input);
+      const pred = fwd.a3[0];
+
+      /* Binary Cross-Entropy loss */
+      const loss = -(target*Math.log(pred+1e-9)+(1-target)*Math.log(1-pred+1e-9));
+      totalLoss += loss;
+      if (Math.round(pred) === target) correct++;
+
+      backward(fwd, [target], lr);
+      lastActivations = [fwd.a0, fwd.a1, fwd.a2, fwd.a3];
+    });
+
+    epoch++;
+    const avgLoss = totalLoss/DATA.length;
+    const acc = (correct/DATA.length)*100;
+    lossHistory.push(avgLoss);
+    accHistory.push(acc);
+    if (lossHistory.length > 100) { lossHistory.shift(); accHistory.shift(); }
+
+    /* Update stat cards */
+    document.getElementById('s-epoch').textContent = epoch;
+    document.getElementById('s-loss').textContent  = avgLoss.toFixed(4);
+    document.getElementById('s-acc').textContent   = Math.round(acc)+'%';
+
+    updateMathBox(avgLoss, acc);
+    updateTruthTable();
+  }
+
+  /* ═══════════════════════════════════════════════════
+     DRAW NEURAL NETWORK
+     Node colour intensity = activation value (0-1)
+     Edge colour = weight sign (purple=positive, coral=negative)
+  ═══════════════════════════════════════════════════ */
+  function drawNet() {
+    const canvas=document.getElementById('net-canvas');
+    const W=canvas.offsetWidth||700, H=220;
+    canvas.width=W*devicePixelRatio; canvas.height=H*devicePixelRatio;
+    const ctx=canvas.getContext('2d'); ctx.scale(devicePixelRatio,devicePixelRatio);
+    ctx.clearRect(0,0,W,H);
+
+    const LAYERS=[2,4,4,1];
+    const LABELS=['Input','Hidden 1','Hidden 2','Output'];
+    const xs=LAYERS.map((_,i)=>60+i*((W-120)/(LAYERS.length-1)));
+    const R=16;
+
+    /* Draw weighted edges first */
+    const allW=[W1,W2,W3];
+    LAYERS.forEach((count,li)=>{
+      if(li>=LAYERS.length-1) return;
+      const nextCount=LAYERS[li+1];
+      const ys=(n)=>100-((count-1)*28)/2+n*28;
+      const yNext=(n)=>100-((nextCount-1)*28)/2+n*28;
+      for(let ni=0;ni<count;ni++){
+        for(let nj=0;nj<nextCount;nj++){
+          const w=allW[li][nj][ni];
+          const alpha=Math.min(Math.abs(w)*0.4,0.3);
+          const col=w>0?`rgba(127,119,221,${alpha})`:`rgba(216,90,48,${alpha})`;
+          ctx.beginPath();
+          ctx.moveTo(xs[li],ys(ni));
+          ctx.lineTo(xs[li+1],yNext(nj));
+          ctx.strokeStyle=col; ctx.lineWidth=1; ctx.stroke();
+        }
+      }
+    });
+
+    /* Draw nodes */
+    LAYERS.forEach((count,li)=>{
+      const spacing=28;
+      const ys=(n)=>100-((count-1)*spacing)/2+n*spacing;
+      for(let ni=0;ni<count;ni++){
+        const cy=ys(ni);
+        const act=lastActivations[li]?Math.max(0,Math.min(1,lastActivations[li][ni]||0)):0;
+        const fill=`rgba(127,119,221,${0.15+0.85*act})`;
+        ctx.beginPath();
+        ctx.arc(xs[li],cy,R,0,Math.PI*2);
+        ctx.fillStyle=fill; ctx.fill();
+        ctx.strokeStyle=`rgba(83,74,183,0.6)`; ctx.lineWidth=1.5; ctx.stroke();
+        ctx.fillStyle='#2C2C2A';
+        ctx.font=`bold 10px monospace`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(act.toFixed(2),xs[li],cy);
+      }
+      ctx.fillStyle='#888'; ctx.font='11px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(LABELS[li],xs[li],196);
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════
+     LOSS CHART (Chart.js)
+  ═══════════════════════════════════════════════════ */
+  let lossChart=null;
+  function initLossChart() {
+    const ctx=document.getElementById('loss-canvas').getContext('2d');
+    lossChart=new Chart(ctx,{
+      data:{
+        labels:[],
+        datasets:[
+          {type:'line',label:'Loss',data:[],borderColor:'#7F77DD',backgroundColor:'#7F77DD11',fill:true,tension:0.4,pointRadius:0,borderWidth:2,yAxisID:'y'},
+          {type:'line',label:'Accuracy',data:[],borderColor:'#1D9E75',backgroundColor:'transparent',fill:false,tension:0.4,pointRadius:0,borderWidth:2,yAxisID:'y2'},
+        ]
+      },
+      options:{
+        animation:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{display:false},
+          y:{min:0,max:1,grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},
+          y2:{min:0,max:100,position:'right',grid:{display:false},ticks:{font:{size:10},callback:v=>v+'%'}},
+        }
+      }
+    });
+  }
+
+  function updateLossChart() {
+    if(!lossChart) return;
+    lossChart.data.labels=lossHistory.map((_,i)=>i);
+    lossChart.data.datasets[0].data=lossHistory;
+    lossChart.data.datasets[1].data=accHistory;
+    lossChart.update();
+  }
+
+  /* ═══════════════════════════════════════════════════
+     TRUTH TABLE
+  ═══════════════════════════════════════════════════ */
+  function updateTruthTable() {
+    const tb=document.getElementById('truth-body');
+    tb.innerHTML=DATA.map(({input,target})=>{
+      const fwd=forward(input);
+      const raw=fwd.a3[0];
+      const rounded=Math.round(raw);
+      const ok=rounded===target;
+      return `<tr>
+        <td>${input[0]}</td><td>${input[1]}</td>
+        <td>${target}</td>
+        <td style="font-family:monospace">${raw.toFixed(4)}</td>
+        <td class="${ok?'correct':'wrong'}">${rounded}</td>
+        <td class="${ok?'correct':'wrong'}">${ok?'✓ Correct':'✗ Wrong'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  /* ═══════════════════════════════════════════════════
+     MATH BOX — human-readable explanation of current state
+  ═══════════════════════════════════════════════════ */
+  function updateMathBox(loss, acc) {
+    const lr = (document.getElementById('lr').value/100).toFixed(2);
+    const actName = document.getElementById('act-fn').value;
+    document.getElementById('math-box').textContent =
+`Epoch ${epoch} | LR=${lr} | Act=${actName.toUpperCase()} (output: SIGMOID)
+
+Forward pass:
+  a0 = input                   → [${lastActivations[0].map(v=>v.toFixed(2)).join(', ')}]
+  z1 = W1·a0 + b1              → apply ${actName}
+  a1 = ${actName}(z1)              → [${lastActivations[1].map(v=>v.toFixed(2)).join(', ')}]
+  a2 = ${actName}(W2·a1 + b2)      → [${lastActivations[2].map(v=>v.toFixed(2)).join(', ')}]
+  a3 = sigmoid(W3·a2 + b3)    → [${lastActivations[3].map(v=>v.toFixed(3)).join(', ')}]  ← prediction
+
+Loss (binary cross-entropy):
+  L = -(y·log(p) + (1-y)·log(1-p)) = ${loss.toFixed(6)}
+
+Backprop (chain rule):
+  dL/dW3 = dL/da3 · da3/dz3 · dz3/dW3
+  dL/dW2 = dL/da3 · ... · da2/dz2 · dz2/dW2   ← gradient flows backward
+  dL/dW1 = dL/da3 · ... · da1/dz1 · dz1/dW1
+
+Weight update (SGD):
+  W ← W − lr · dL/dW
+
+Current accuracy: ${Math.round(acc)}% | ${acc===100?'✓ Network has learned XOR!':'Still learning…'}`;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     TRAINING LOOP — uses requestAnimationFrame for smooth viz
+  ═══════════════════════════════════════════════════ */
+  function loop() {
+    if (!training) return;
+    const steps = parseInt(document.getElementById('speed').value);
+    for (let i=0;i<steps;i++) trainEpoch();
+    drawNet();
+    updateLossChart();
+    animId = requestAnimationFrame(loop);
+  }
+
+  function toggleTrain() {
+    training = !training;
+    document.getElementById('train-btn').textContent = training ? '⏸ Pause' : '▶ Train';
+    if (training) loop(); else cancelAnimationFrame(animId);
+  }
+
+  function resetNetwork() {
+    training=false; cancelAnimationFrame(animId);
+    document.getElementById('train-btn').textContent='▶ Train';
+    initNetwork(); drawNet();
+    document.getElementById('s-epoch').textContent='0';
+    document.getElementById('s-loss').textContent='—';
+    document.getElementById('s-acc').textContent='—';
+    document.getElementById('math-box').textContent='Press ▶ Train to start.';
+    lossChart.data.labels=[]; lossChart.data.datasets[0].data=[]; lossChart.data.datasets[1].data=[];
+    lossChart.update();
+    document.getElementById('truth-body').innerHTML='';
+  }
+
+  function updateLR() {
+    const v=(document.getElementById('lr').value/100).toFixed(2);
+    document.getElementById('lr-out').textContent=v;
+    document.getElementById('s-lr').textContent=v;
+  }
+  document.getElementById('speed').addEventListener('input',e=>{
+    document.getElementById('speed-out').textContent=e.target.value;
+  });
+
+  /* ─── INIT ─── */
+  initNetwork();
+  initLossChart();
+  drawNet();
+  updateTruthTable();
+  window.addEventListener('resize',drawNet);
+</script>
+</body>
+</html>
