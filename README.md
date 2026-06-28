@@ -1,4 +1,4 @@
-# Neural Network Platform — Enterprise Edition
+# Neural Network Visualizer
 
 An end-to-end ML platform for training, tracking, and serving neural networks. Built on FastAPI + Celery + NumPy — the backpropagation engine is still implemented from scratch, but now runs as an async distributed task with real-time metric streaming, experiment tracking, model registry, and a REST inference API.
 
@@ -51,7 +51,7 @@ FastAPI (Python 3.11)
 ## Project Structure
 
 ```
-nn-platform-enterprise/
+Neural-Network-Visualizer/
 ├── docker-compose.yml
 ├── server/
 │   ├── main.py              ← FastAPI app + WebSocket metric stream
