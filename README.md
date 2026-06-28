@@ -1,225 +1,277 @@
-# Neural Network Visualizer — From Scratch in JavaScript
+# Neural Network Platform — Enterprise Edition
 
-A fully interactive neural network trained **live in the browser** with **zero libraries** (except Chart.js for the loss curve). Forward propagation, backpropagation, and gradient descent are implemented from raw math — no TensorFlow, no PyTorch.
+An end-to-end ML platform for training, tracking, and serving neural networks. Built on FastAPI + Celery + NumPy — the backpropagation engine is still implemented from scratch, but now runs as an async distributed task with real-time metric streaming, experiment tracking, model registry, and a REST inference API.
 
-![HTML](https://img.shields.io/badge/HTML-5-orange) ![JS](https://img.shields.io/badge/JavaScript-ES6-yellow) ![Chart.js](https://img.shields.io/badge/Chart.js-4.4.1-red) ![ML](https://img.shields.io/badge/ML-From_Scratch-purple)
-
----
-
-## What makes this IIT-level
-
-- Implements **backpropagation from scratch** using the chain rule — no autograd, no library
-- Solves **XOR** (the classic proof that shallow networks fail non-linear problems)
-- Node colours show **live activation values** — you can watch the network learn in real time
-- Swappable **activation functions** (ReLU / Sigmoid / Tanh) so you can observe the effect
-- **Math explainer panel** shows the exact forward/backward pass equations at each epoch
+![Python](https://img.shields.io/badge/Python-3.11-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-green) ![Celery](https://img.shields.io/badge/Celery-5.3-red) ![NumPy](https://img.shields.io/badge/NumPy-1.26-orange) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue) ![MongoDB](https://img.shields.io/badge/MongoDB-7-green) ![Redis](https://img.shields.io/badge/Redis-7-red)
 
 ---
 
-## Features
+## Architecture
 
-| Feature | Description |
-|---|---|
-| Live network graph | Nodes glow brighter as activation increases; edges coloured by weight sign |
-| Loss + accuracy chart | Real-time Chart.js line chart plotting BCE loss and accuracy |
-| Truth table | Shows raw and rounded predictions for all 4 XOR inputs each epoch |
-| Hyperparameter controls | Learning rate, training speed, and activation function — all live |
-| Math explainer | Shows the actual forward pass values and gradient equations as text |
-| Xavier initialisation | Proper weight init to prevent vanishing gradients from the start |
+```
+React Dashboard
+  │  REST (auth, datasets, jobs, inference, experiments)
+  │  WebSocket /ws/jobs/:id  (live metrics stream)
+  ▼
+FastAPI (Python 3.11)
+  ├── POST /api/jobs  → enqueues Celery task
+  ├── WS   /ws/jobs/:id → subscribes to Redis channel
+  └── GET  /api/inference/:modelId → loads checkpoint, runs forward pass
+         │
+    Celery Worker (NumPy backprop engine)
+         │  publishes epoch metrics to Redis pub/sub
+         │  saves checkpoints to MongoDB + S3
+         ▼
+  ┌──────────────────────────────────────────────┐
+  │  PostgreSQL   │  MongoDB        │  Redis       │
+  │  Users, jobs, │  Metrics,       │  Task queue, │
+  │  datasets     │  checkpoints,   │  pub/sub,    │
+  │               │  experiment runs│  cache       │
+  └──────────────────────────────────────────────┘
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| API server | FastAPI 0.110 | Async Python, automatic OpenAPI docs, WebSocket support built in |
+| ML engine | NumPy 1.26 (custom backprop) | No TensorFlow/PyTorch — the implementation IS the project |
+| Task queue | Celery 5 + Redis broker | Training runs in a separate worker process; API stays responsive |
+| Metric streaming | Redis pub/sub → WebSocket | Worker publishes per-epoch; browser receives in real time |
+| Auth | JWT (python-jose) + bcrypt (passlib) | Stateless, horizontally scalable |
+| Primary DB | PostgreSQL 16 (asyncpg + SQLAlchemy) | Users, training jobs, datasets — relational |
+| Experiment DB | MongoDB 7 (Motor async driver) | Per-epoch metric logs, model checkpoints — document model fits naturally |
+| Object storage | S3 / MinIO | Model checkpoint files (weight matrices as JSON/pickle) |
+| Container | Docker + Compose | Full stack in one command |
 
 ---
 
 ## Project Structure
 
 ```
-neural-network-visualizer/
-└── neural-network-visualizer.html    ← Entire project in one file
+nn-platform-enterprise/
+├── docker-compose.yml
+├── server/
+│   ├── main.py              ← FastAPI app + WebSocket metric stream
+│   ├── celery_app.py        ← Celery instance configuration
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── routers/
+│   │   ├── auth.py          ← POST /register /login /refresh
+│   │   ├── datasets.py      ← Upload CSV/NPZ, list, preview
+│   │   ├── jobs.py          ← Start/stop/list training jobs
+│   │   ├── inference.py     ← Single + batch prediction endpoints
+│   │   ├── experiments.py   ← List runs, compare metrics
+│   │   └── registry.py      ← Register/list/delete model versions
+│   ├── auth/
+│   │   └── jwt.py           ← Token creation + verification
+│   └── db/
+│       ├── postgres.py      ← SQLAlchemy async engine
+│       ├── mongo.py         ← Motor async client + collections
+│       ├── redis_c.py       ← aioredis async + sync redis clients
+│       └── schema.sql       ← PostgreSQL DDL
+└── worker/
+    └── train.py             ← Celery task: full backprop training loop
 ```
 
 ---
 
-## The Math — Step by Step
+## Quick Start
 
-### Architecture: 2 → 4 → 4 → 1
+```bash
+# 1. Configure environment
+cp server/.env.example server/.env
+# Add your JWT_SECRET, DB passwords, and S3 credentials
 
-```
-Input layer:   2 neurons  (XOR inputs A and B)
-Hidden layer 1: 4 neurons  (ReLU activation)
-Hidden layer 2: 4 neurons  (ReLU activation)
-Output layer:  1 neuron   (Sigmoid activation → probability 0–1)
-```
+# 2. Start everything
+docker compose up --build
+# This starts: FastAPI, Celery worker, PostgreSQL, MongoDB, Redis
 
----
-
-### Forward Propagation
-
-For each layer: compute weighted sum, add bias, apply activation function.
-
-```js
-// Layer 1 (hidden)
-const z1 = W1.map((row, i) =>
-  row.reduce((sum, w, j) => sum + w * a0[j], 0) + b1[i]
-);
-const a1 = z1.map(relu); // apply ReLU element-wise
-
-// Layer 2 (hidden)
-const z2 = W2.map((row, i) =>
-  row.reduce((sum, w, j) => sum + w * a1[j], 0) + b2[i]
-);
-const a2 = z2.map(relu);
-
-// Output layer (sigmoid for binary classification)
-const z3 = W3.map((row, i) =>
-  row.reduce((sum, w, j) => sum + w * a2[j], 0) + b3[i]
-);
-const a3 = z3.map(sigmoid); // prediction: probability between 0 and 1
+# 3. Access points:
+#    API docs:   http://localhost:8000/docs     (Swagger UI, auto-generated)
+#    API:        http://localhost:8000/api
+#    WebSocket:  ws://localhost:8000/ws/jobs/:jobId?token=<jwt>
+#    Health:     http://localhost:8000/health
 ```
 
 ---
 
-### Loss Function — Binary Cross-Entropy
+## API Reference
 
-```js
-// For a single sample:
-const loss = -(target * Math.log(pred + 1e-9) + (1 - target) * Math.log(1 - pred + 1e-9));
-// 1e-9 prevents log(0) = -Infinity (numerical stability)
-```
-
-Why BCE and not MSE? Because BCE is the correct log-likelihood loss for binary classification. Its derivative with a sigmoid output simplifies cleanly to `pred - target`, making backprop elegant.
-
----
-
-### Backpropagation — Chain Rule Layer by Layer
-
-The goal: compute `dL/dW` for every weight matrix so we know which direction to nudge each weight.
+### Authentication
 
 ```
-dL/dW3 = dL/da3 · da3/dz3 · dz3/dW3     (output layer)
-dL/dW2 = dL/da3 · da3/dz3 · dz3/da2 · da2/dz2 · dz2/dW2   (layer 2)
-dL/dW1 = ...same, one more step back...   (layer 1)
+POST /api/auth/register    { name, email, password }
+POST /api/auth/login       { email, password }
+POST /api/auth/refresh     { refreshToken }
 ```
 
-In code:
+### Datasets
 
-```js
-// OUTPUT LAYER
-// For BCE + sigmoid, dL/dz3 = pred - target (beautiful simplification)
-const dL_dz3 = a3.map((p, i) => (p - target[i]) * sigmoidDeriv(z3[i]));
-
-// Update W3 and b3
-W3.forEach((row, i) => row.forEach((_, j) => {
-  W3[i][j] -= lr * dL_dz3[i] * a2[j];  // W -= lr * gradient
-}));
-b3.forEach((_, i) => { b3[i] -= lr * dL_dz3[i]; });
-
-// HIDDEN LAYER 2 — gradient flows backward through W3
-const dL_da2 = a2.map((_, j) =>
-  W3.reduce((sum, row, i) => sum + row[j] * dL_dz3[i], 0)
-);
-const dL_dz2 = dL_da2.map((d, j) => d * reluDeriv(z2[j]));
-
-W2.forEach((row, i) => row.forEach((_, j) => {
-  W2[i][j] -= lr * dL_dz2[i] * a1[j];
-}));
-// ... same pattern for layer 1
+```
+POST   /api/datasets                   Upload CSV or NPZ file (multipart/form-data)
+GET    /api/datasets                   List your datasets
+GET    /api/datasets/:id               Dataset info + first 10 rows preview
+DELETE /api/datasets/:id
 ```
 
----
+### Training Jobs
 
-### Activation Functions
+```
+POST /api/jobs
+Body:
+{
+  "name":          "XOR experiment 3",
+  "dataset_id":    "uuid",
+  "layer_sizes":   [2, 8, 8, 1],
+  "activation":    "relu",
+  "learning_rate": 0.01,
+  "momentum":      0.9,
+  "epochs":        2000,
+  "batch_size":    4
+}
+Response: { "job_id": "uuid", "status": "queued" }
 
-```js
-// ReLU — fast, no vanishing gradient for positive values
-const relu    = x => Math.max(0, x);
-const reluD   = x => x > 0 ? 1 : 0;  // derivative
-
-// Sigmoid — squashes to (0,1), used in output for binary prob
-const sigmoid = x => 1 / (1 + Math.exp(-x));
-const sigD    = x => { const s = sigmoid(x); return s * (1 - s); };
-
-// Tanh — squashes to (-1,1), zero-centred (better than sigmoid in hidden)
-const tanh    = x => Math.tanh(x);
-const tanhD   = x => 1 - Math.tanh(x) ** 2;
+GET    /api/jobs              List jobs (paginated)
+GET    /api/jobs/:id          Status + final metrics
+POST   /api/jobs/:id/stop     Set Redis stop flag → worker exits cleanly
 ```
 
----
+### Real-Time Metrics (WebSocket)
 
-### Weight Initialisation — Xavier / Glorot
+```
+Connect: ws://host/ws/jobs/<job_id>?token=<access_jwt>
 
-```js
-function xavierInit(rows, cols) {
-  const scale = Math.sqrt(6 / (rows + cols));
-  // Uniform distribution in [-scale, +scale]
-  return Array.from({length: rows}, () =>
-    Array.from({length: cols}, () => (Math.random() * 2 - 1) * scale)
-  );
+Server streams (every epoch):
+{
+  "epoch":    150,
+  "loss":     0.043821,
+  "accuracy": 0.9750,
+  "lr":       0.01
 }
 ```
 
-Why Xavier? If weights are too large, activations saturate (gradient ≈ 0 — vanishing gradient). If too small, signals shrink to 0 through the layers. Xavier scales the initial distribution based on layer size to keep variance stable.
+Architecture: the Celery worker calls `redis.publish(f"job:{job_id}:metrics", payload)` after each epoch. The FastAPI WebSocket handler subscribes to that channel and forwards to the browser. No polling, no database overhead on the hot path.
+
+### Inference
+
+```
+POST /api/inference/:modelId
+Body: { "inputs": [[0, 1], [1, 0]] }
+Response: { "predictions": [0.97, 0.96], "model_version": "v3" }
+
+POST /api/inference/batch
+Body: { "model_id": "uuid", "rows": [[...], [...]] }
+```
+
+### Experiments
+
+```
+GET /api/experiments                   List all runs with summary metrics
+GET /api/experiments/:id               Full run: params + per-epoch metrics
+GET /api/experiments/compare?ids=a,b   Side-by-side metric comparison
+```
+
+### Model Registry
+
+```
+POST   /api/registry                   Register checkpoint { job_id, name, version }
+GET    /api/registry                   List registered models
+DELETE /api/registry/:id
+```
 
 ---
 
-### Training Loop — requestAnimationFrame
+## The Backpropagation Engine
 
-```js
-function loop() {
-  if (!training) return;
+The core ML code (`worker/train.py`) implements everything from scratch using NumPy — no TensorFlow, no PyTorch. Here's what each piece does at the enterprise level:
 
-  // Run N epochs per frame (controlled by speed slider)
-  const steps = parseInt(document.getElementById('speed').value);
-  for (let i = 0; i < steps; i++) trainEpoch();
+### Forward pass — vectorised
 
-  drawNet();        // redraw network with new activations
-  updateLossChart();
-
-  animId = requestAnimationFrame(loop); // schedule next frame (~60fps)
-}
+```python
+# Process an entire batch at once (matrix multiply, not loops)
+# X shape: (batch_size, n_features)
+# W shape: (n_neurons_out, n_neurons_in)
+z = X @ W.T + b          # weighted sum: (batch, out)
+a = relu(z)              # activation:   (batch, out)
 ```
 
-`requestAnimationFrame` syncs to the browser's refresh rate (~60fps) and pauses when the tab is hidden — more efficient than `setInterval`.
+Vectorising across the batch dimension is what makes NumPy fast enough for training — one matrix multiply instead of a loop over samples.
+
+### Backward pass — chain rule in matrix form
+
+```python
+# Output layer (BCE + sigmoid → elegant simplification)
+dz = (prediction - y) / batch_size      # (batch, 1)
+
+# Gradient of W: outer product of error and previous activation
+dW = dz.T @ a_prev                      # (out, in)
+db = dz.sum(axis=0, keepdims=True)      # (1, out)
+
+# Propagate error back through this layer for next iteration
+dz_prev = (dz @ W) * relu_derivative(z_prev)
+```
+
+### SGD with momentum
+
+```python
+# Momentum prevents oscillation and helps escape shallow minima
+# vW accumulates gradient direction (exponential moving average)
+vW = momentum * vW - lr * dW
+W  += vW
+```
+
+### Why Celery instead of running in the API process?
+
+Training 1000 epochs blocks the CPU for seconds. If this ran in the FastAPI handler, every request during training would time out. Celery moves the computation to a worker process (or machine) and the API remains responsive. The worker and API communicate through Redis, not shared memory — so workers can run on different machines entirely (GPU instances in production).
 
 ---
 
-### Why XOR?
+## Interview Q&A
 
-XOR is the simplest function that is **not linearly separable** — you cannot draw a single straight line to separate the two classes.
+**"Why not just use PyTorch?"**
+PyTorch is the right choice for production ML. This project implements backprop from scratch because understanding the algorithm is what differentiates a senior engineer from someone who knows the API. In interviews, you can walk through the chain rule derivation for every layer. That's the point.
 
-```
-Input → Output
-(0,0) → 0
-(0,1) → 1   ← class 1
-(1,0) → 1   ← class 1
-(1,1) → 0
-```
+**"How does the metric streaming work end-to-end?"**
+Celery worker publishes JSON to a Redis pub/sub channel named `job:<id>:metrics` after each epoch. The FastAPI WebSocket handler subscribes using `aioredis` in an async loop, forwarding each message to the browser WebSocket connection. The browser receives events within milliseconds of each epoch completing — no polling, no database writes on the hot path.
 
-A single-layer perceptron (no hidden layers) provably cannot learn this. Adding one hidden layer with non-linear activations is enough. This is the historical result that revived neural network research in the 1980s (Minsky & Papert's criticism, then Rumelhart et al.'s backprop solution).
+**"How would you support GPU training?"**
+Replace NumPy with CuPy (same API, GPU-backed arrays). Run the Celery workers on GPU instances in Kubernetes. The rest of the stack — FastAPI, Redis, databases — runs unchanged on CPU instances.
+
+**"What's in the model registry?"**
+Each registered model version is a record pointing to a checkpoint in S3 (or MongoDB GridFS). It stores: the weight matrices, the architecture config (layer sizes, activation), training metrics, the dataset it was trained on, and a version tag. The inference endpoint loads the weights, reconstructs the network, and runs the forward pass.
+
+**"How would you A/B test two model versions?"**
+Add a `variant` field to the inference request. Route 50% of traffic to model v1 and 50% to v2. Log prediction + variant to an events table. Run a significance test after N predictions. Promote the winner to `stable` in the model registry.
 
 ---
 
-## What to say in an interview
+## Production checklist
 
-**"Why is XOR significant?"**
-It's the classic proof that non-linear activations are necessary. A single perceptron computes a linear decision boundary. XOR's four points require two boundaries — impossible with one layer. Adding a hidden layer with ReLU or sigmoid creates a composition of linear boundaries that can carve out any non-linear region. The Universal Approximation Theorem proves that a single hidden layer of sufficient width can approximate any continuous function.
-
-**"Walk me through backprop for the output layer."**
-For binary cross-entropy with a sigmoid output, the gradient simplifies elegantly. The derivative of BCE with respect to z (pre-activation) is just `pred - target`. This means the gradient is large when the prediction is confident and wrong, and small when the prediction is correct — exactly what we want. From z, we multiply by the activations of the previous layer to get `dL/dW` and update each weight by subtracting `lr * dL/dW`.
-
-**"What would you add next?"**
-Momentum (store the previous gradient direction and blend it with current), Adam optimiser (adaptive per-weight learning rates), mini-batch gradient descent (average gradients over N samples before updating), and dropout regularisation (randomly zero out neurons during training to prevent overfitting).
+- [ ] Set `SECRET_KEY` and all DB passwords to random values in CI secrets
+- [ ] Enable PostgreSQL SSL mode in `DATABASE_URL`
+- [ ] Use Redis Cluster for pub/sub at scale (Redis Sentinel for HA)
+- [ ] Store model checkpoints in S3 (not MongoDB) for files over 16MB
+- [ ] Configure Celery `task_serializer = 'json'` and `result_expires`
+- [ ] Add Prometheus metrics endpoint (`/metrics`) and Grafana dashboard
+- [ ] Run Celery workers on GPU instances for large networks
+- [ ] Add DVC for dataset versioning (Git-style versioning for data files)
+- [ ] Kubernetes: separate deployments for API, worker, and flower (Celery monitor)
 
 ---
 
 ## YouTube Resources
 
-- **The spelled-out intro to neural networks and backpropagation — Andrej Karpathy**: https://www.youtube.com/watch?v=VMj-3S1tku0
-  — 2.5 hours. The single best explanation of backprop from scratch. Highly recommended before your interview.
+- **Andrej Karpathy — The spelled-out intro to backpropagation (micrograd)**: https://www.youtube.com/watch?v=VMj-3S1tku0  
+  The definitive from-scratch backprop video. Watch before any ML system design interview.
 
-- **3Blue1Brown Neural Networks series**: https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi
-  — Visual intuition for what the math means geometrically.
+- **3Blue1Brown — Neural Networks series**: https://www.youtube.com/playlist?list=PLZHQObOWTQDNU6R1_67000Dx_ZCJB-3pi  
+  Visual intuition for what the matrix math means geometrically.
 
 ---
 
 ## License
 
-MIT — free to use, modify, and include in your portfolio.
+MIT

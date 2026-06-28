@@ -1,0 +1,78 @@
+# docker-compose.yml — Neural Network Platform
+# Services: FastAPI, Celery worker, PostgreSQL, MongoDB, Redis
+
+version: '3.9'
+
+services:
+
+  api:
+    build: ./server
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL:   postgresql+asyncpg://nn:nn@postgres:5432/nn_platform
+      DATABASE_URL_SYNC: postgresql://nn:nn@postgres:5432/nn_platform
+      MONGO_URL:      mongodb://mongo:27017/nn_platform
+      REDIS_URL:      redis://redis:6379/0
+      JWT_SECRET:     dev_secret_change_in_production
+      S3_BUCKET:      nn-checkpoints
+      AWS_DEFAULT_REGION: ap-south-1
+    depends_on:
+      - postgres
+      - mongo
+      - redis
+    volumes:
+      - ./server:/app
+    restart: unless-stopped
+
+  worker:
+    build: ./server
+    command: celery -A celery_app worker --loglevel=info --concurrency=2
+    environment:
+      DATABASE_URL_SYNC: postgresql://nn:nn@postgres:5432/nn_platform
+      MONGO_URL:      mongodb://mongo:27017/nn_platform
+      REDIS_URL:      redis://redis:6379/0
+    depends_on:
+      - postgres
+      - mongo
+      - redis
+    volumes:
+      - ./server:/app
+      - ./worker:/app/tasks
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nn
+      POSTGRES_PASSWORD: nn
+      POSTGRES_DB: nn_platform
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./server/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nn"]
+      interval: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27018:27017"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
